@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:dw="http://www.mulesoft.org/schema/mule/ee/dw" xmlns:batch="http://www.mulesoft.org/schema/mule/batch" xmlns:sfdc="http://www.mulesoft.org/schema/mule/sfdc" xmlns:db="http://www.mulesoft.org/schema/mule/db" xmlns:http="http://www.mulesoft.org/schema/mule/http" xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:spring="http://www.springframework.org/schema/beans" 
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-current.xsd
+http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/current/mule-db.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.mulesoft.org/schema/mule/batch http://www.mulesoft.org/schema/mule/batch/current/mule-batch.xsd
+http://www.mulesoft.org/schema/mule/sfdc http://www.mulesoft.org/schema/mule/sfdc/current/mule-sfdc.xsd
+http://www.mulesoft.org/schema/mule/ee/dw http://www.mulesoft.org/schema/mule/ee/dw/current/dw.xsd">
+    <db:mysql-config name="MySQL_Configuration" host="${db.host}" port="${db.port}" user="${db.user}" password="${db.pwd}" database="${db.database}" doc:name="MySQL Configuration"/>
+    <http:listener-config name="HTTP_Listener_Configuration" host="0.0.0.0" port="8089" doc:name="HTTP Listener Configuration"/>
+    <sfdc:config name="Salesforce__Basic_Authentication" username="${sfdc.user}" password="${sfdc.pwd}" securityToken="${sfdc.token}" doc:name="Salesforce: Basic Authentication"/>
+    <batch:job name="implementationBatch">
+        <batch:input>
+            <poll doc:name="Poll">
+                <db:select config-ref="MySQL_Configuration" doc:name="Database">
+                    <db:parameterized-query><![CDATA[select * from accounts where postal = '80305']]></db:parameterized-query>
+                </db:select>
+            </poll>
+            <dw:transform-message doc:name="Transform Message">
+                <dw:set-payload><![CDATA[%dw 1.0
+%output application/java
+---
+payload map ((payload01 , indexOfPayload01) -> {
+	Name: payload01.name,
+	BillingStreet: payload01.street,
+	BillingCity: payload01.city,
+	BillingState: payload01.state,
+	BillingPostalCode: payload01.postal,
+	BillingCountry: payload01.country
+})]]></dw:set-payload>
+            </dw:transform-message>
+        </batch:input>
+        <batch:process-records>
+            <batch:step name="Batch_Step1">
+                <enricher source="#[payload.size() &gt; 0]" target="#[recordVars.exists]" doc:name="Message Enricher">
+                    <sfdc:query config-ref="Salesforce__Basic_Authentication" query="dsql:SELECT Name FROM Account WHERE Name = '#[payload.Name]'" doc:name="Salesforce"/>
+                </enricher>
+                <logger message="TEST FOR RECORD EXISTS ........................" level="INFO" doc:name="Logger"/>
+            </batch:step>
+            <batch:step name="Batch_Step" accept-expression="#[recordVars.exists]">
+                <batch:commit size="10" doc:name="Batch Commit">
+                    <sfdc:create config-ref="Salesforce__Basic_Authentication" type="Account" doc:name="Salesforce">
+                        <sfdc:objects ref="#[payload]"/>
+                    </sfdc:create>
+                </batch:commit>
+                <logger level="INFO" doc:name="Logger" message="Logger After Commit  + #[payload] + '\n\n\n'"/>
+            </batch:step>
+        </batch:process-records>
+    </batch:job>
+</mule>
